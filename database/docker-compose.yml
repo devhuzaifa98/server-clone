@@ -1,0 +1,36 @@
+version: "3.7"
+services:
+  postgres:
+    image: postgres:latest
+    container_name: Dev
+    restart: always
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=Dev
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      - "5438:5432"
+    volumes:
+      - ./FactiiiDevDB:/var/lib/postgresql/data
+      - ./dev.sql:/docker-entrypoint-initdb.d/dump.sql
+  postgres-Test:
+    image: postgres:latest
+    container_name: Test
+    restart: always
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=Test
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+    ports:
+      - "5439:5432"
+    volumes:
+      - ./FactiiiTestDB:/var/lib/postgresql/data
+      - ./test.sql:/docker-entrypoint-initdb.d/dump.sql

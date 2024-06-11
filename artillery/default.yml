@@ -1,0 +1,62 @@
+# This load test works in three distinctive stages:
+# Stage 1: Warming up Stage: ~500 unique user scenarios
+# Stage 2: Ramped up Stage: ~1000 unique user scenarios
+# Stage 3: Spike Peak Stage: ~1500 unique user scenarios
+
+config:
+  target: http://localhost:5001
+  # target: https://api.factiii.com
+  phases:
+    - duration: 60
+      arrivalRate: 1
+      rampTo: 5
+      name: Warming up stage
+    - duration: 60
+      arrivalRate: 5
+      rampTo: 10
+      name: Ramped up stage
+    - duration: 60
+      arrivalRate: 25
+      name: Spike Peak
+
+  plugins:
+    ensure: {}
+    apdex: {}
+    metrics-by-endpoint: {}
+
+  apdex:
+    threshold: 100
+
+  ensure:
+    thresholds:
+      - http.response_time.p99: 100
+      - http.response_time.p95: 75
+
+scenarios:
+  - flow:
+      - get:
+          url: "/posts/trending"
+      - get:
+          url: "/posts/trending?page=1"
+      - get:
+          url: "/posts/trending?page=2"
+      - get:
+          url: "/users/details/jon"
+      - get:
+          url: "/users/details/nataliia"
+      - get:
+          url: "/users/details/parik"
+      - get:
+          url: "/posts/cde298b3-4f9c-40c5-8d78-678ca4c9c1d5"
+      - get:
+          url: "/posts/0cd1ccf8-5cd9-4401-99b6-12267867b452"
+      - get:
+          url: "/posts/655e7519-3511-4512-ae87-46c4a0d6d933"
+      - get:
+          url: "/factiiis/political"
+      - get:
+          url: "/factiiis/nsfw"
+      - get:
+          url: "/factiiis/funny"
+      - get:
+          url: "/posts/trending"

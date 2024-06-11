@@ -1,0 +1,971 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SiteSettings {
+  id                        Int      @id @default(autoincrement())
+  createdAt                 DateTime @default(now())
+  coinTronRatio             Int
+  coinTransferRatio         Int
+  requestRateLimit          Int
+  postsPerMinute            Int
+  maxSpacesPerUser          Int
+  openAiLimitPerHourPerUser Int
+  openAiLimitPremiumUser    Int
+}
+
+enum UserStatus {
+  ACTIVE //default to active
+  DEACTIVATED //user requested account be deactivated
+  BANNED //user cannot access account at all, this is a very serious issue and should not be used often
+  MUTED //user can access account, but can not post or chat about anything IE they did something illegal repeatedly
+}
+
+enum UserType {
+  PRIVATE //Private does not show anywhere unless it is your own content
+  PREMIUM //user requires premium to view
+  PAID //user requires their own payment to access
+  INVITE //can not follow without invite
+}
+
+enum UserTag {
+  HUMAN
+  BOT
+  GOVERNMENT
+  ACADEMIA
+  BUSINESS
+  NEW
+  WAITLIST
+}
+
+enum EmailVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+}
+
+model User {
+  id                      Int                        @id @default(autoincrement())
+  types                   UserType[]                 @default([])
+  status                  UserStatus                 @default(ACTIVE)
+  tronsBalance            BigInt                     @default(0) //Total trons balance now
+  coinsBalance            Int                        @default(0) //Total coins balance now
+  createdAt               DateTime                   @default(now())
+  costs                   UserCost[] //Holds all indiviual user costs, can be used to verif cost is accurate
+  email                   String                     @unique
+  emailVerificationStatus EmailVerificationStatus    @default(UNVERIFIED)
+  password                String
+  username                String                     @unique
+  name                    String                     @default("Factiii User")
+  bio                     String?
+  twoFaEnabled            Boolean                    @default(false)
+  avatar                  Upload?                    @relation("userAvatar", fields: [avatarId], references: [id], onDelete: Cascade)
+  avatarId                String?
+  banner                  Upload?                    @relation("userBanner", fields: [bannerId], references: [id], onDelete: Cascade)
+  bannerId                String?
+  pinnedPost              Post?                      @relation("pinnedUserPost", fields: [pinnedPostId], references: [id])
+  pinnedPostId            Int?
+  robohash                String?                    @default(uuid())
+  sessions                Session[]
+  passwordReset           PasswordReset[]
+  uploads                 Upload[]                   @relation("uploads")
+  stripeCustomerId        String?                    @unique
+  payments                Payment[]
+  forNotifications        Notification[]             @relation("targetUser")
+  fromNotifications       Notification[]             @relation("referenceUser")
+  followedBy              Follows[]                  @relation("following")
+  following               Follows[]                  @relation("follower")
+  posts                   Post[]
+  votes                   Vote[]
+  savedPosts              SavedPost[]
+  postAwards              PostAward[]
+  preferences             UserPreference?
+  botSettings             BotSetting?
+  mutedUsers              UserMute[]                 @relation("muter") //this user won't see reports from muted users
+  mutedBy                 UserMute[]                 @relation("mutedUser")
+  sentMessages            Message[]
+  conversations           ConversationParticipants[]
+  devices                 Device[]                   @relation("devices")
+  errors                  Error[]
+  referredById            Int?
+  referredBy              User?                      @relation("referrals", fields: [referredById], references: [id])
+  referredUsers           User[]                     @relation("referrals")
+  orders                  Order[]
+  subscriptions           Subscription[]
+  bans                    Ban[]
+  blockedUsers            User[]                     @relation("blockedUsers") //others can not see your content
+  blockedBy               User[]                     @relation("blockedUsers")
+  reports                 Report[]                   @relation("user") //reports made by user
+  actionTakenOnReports    Report[]                   @relation("actionTakenBy")
+  otpsForLogin            OTPBasedLogin[]
+  otpForEmailVerification String?
+  userCoinRewards         UserCoinReward[]
+  spaces                  SpaceMember[]
+  filters                 SpaceFilter[]
+  historyItems            History[]
+  feedbacks               Feedback[]
+  SpaceInvite             SpaceInvite[]              @relation("user")
+  inviter                 SpaceInvite[]              @relation("inviter")
+  tag                     UserTag                    @default(NEW)
+  factiiisTagged          PostFactiii[]              @relation("factiiiTag")
+  reportedUsers           Report[]                   @relation("reportedUser")
+  readConversations       ReadConversation[]
+  lastActive              DateTime?
+  factiiisCreated         Factiii[]                  @relation("creator")
+  pinnedFactiiis          Factiii[]                  @relation("pinnedUserFactiiis")
+  scrapes                 Scrape[]
+  goals                   FactiiiGoal[]
+
+  @@index([status])
+  @@index([username])
+}
+
+model Device {
+  id        Int       @id @default(autoincrement())
+  pushToken String    @unique //unique to device
+  createdAt DateTime  @default(now())
+  users     User[]    @relation("devices") //Device can login multiple users
+  sessions  Session[]
+}
+
+model Model {
+  id                         Int                         @id @default(autoincrement())
+  cost                       BigInt // how much this cost to run in USD $0.000,001
+  query                      String? //model query sent to OpenAI
+  maxTokens                  Int? //Max tokens this model can support/max characters for images
+  description                String //Description for user to see
+  perTokens                  Int //cost is per this many tokens for OpenAI, can be different for others later
+  active                     Boolean
+  postOpenAILanguageSettings PostOpenAILanguageSetting[] //tracks settings used when model ran
+  type                       BotType
+  userCosts                  UserCost[]
+}
+
+enum BotType {
+  OPENAI_LANGUAGE
+  OPENAI_IMAGE
+  OPENAI_EMBEDDING
+  OPENAI_FINE_TUNED
+  WIKIPEDIA_SCRAPER
+}
+
+model PostOpenAILanguageSetting {
+  id              Int   @id @default(autoincrement())
+  chosenMaxTokens Int //OpenAI chosen max tokens for this request
+  temperature     Int //OpenAI temperature setting 0=defined response, 1=max variability, 0.9=creative
+  n               Int   @default(1) // number of prompts to return, very expensive to use
+  model           Model @relation(fields: [modelId], references: [id])
+  modelId         Int
+  posts           Post  @relation(fields: [postId], references: [id])
+  postId          Int //This post that used these settings
+}
+
+model BotSetting {
+  enabled       Boolean   @default(false) //if bot is enabled
+  scrapesPerDay Int       @default(10) //how many scrapes this bot can do per day
+  rootUrl       String? //url to forward posts to for someones bot to reply
+  types         BotType[] //allows bot to choose any model under the type it is selected for
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        Int       @unique
+
+  @@id([userId])
+}
+
+model UserPreference {
+  user                    User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                  Int                  @unique
+  awardsVisibilityPrivate Boolean              @default(false)
+  allowProfanity          Boolean              @default(false)
+  betaAccess              Boolean              @default(false)
+  allowPoliticalContent   Boolean              @default(false)
+  hidePostsOnProfile      Boolean              @default(false)
+  hideProfileHistory      Boolean              @default(false)
+  factiiis                FactiiiPreferences[]
+  allowNSFWContent        Boolean              @default(false)
+  privatePinnedFactiiis   Boolean              @default(true)
+
+  @@id([userId])
+}
+
+model FactiiiPreferences {
+  orderNumber          Int
+  factiii              Factiii        @relation(fields: [factiiiId], references: [id], onDelete: Cascade)
+  factiiiId            Int
+  userPreference       UserPreference @relation(fields: [userPreferenceUserId], references: [userId], onDelete: Cascade)
+  userPreferenceUserId Int
+
+  @@id([factiiiId, userPreferenceUserId])
+}
+
+//Holds all costs a user has created
+model UserCost {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade) //User costing money
+  usd       BigInt //cost in USD $0.000,001
+  tokens    Int // for OpenAi this is the AI tokens spent, for others can mean different things
+  model     Model    @relation(fields: [modelId], references: [id])
+  modelId   Int
+}
+
+model Follows {
+  follower    User @relation("follower", fields: [followerId], references: [id])
+  followerId  Int
+  following   User @relation("following", fields: [followingId], references: [id])
+  followingId Int
+
+  @@id([followerId, followingId])
+}
+
+model Session {
+  id           Int       @id @default(autoincrement())
+  socketId     String?   @unique //assoicate socketId with session
+  twoFaSecret  String?   @unique //associate twoFaSecret with session
+  refreshToken String    @unique @default(uuid())
+  issuedAt     DateTime  @default(now())
+  browserName  String    @default("Unknown")
+  lastUsed     DateTime  @default(now()) @updatedAt
+  device       Device?   @relation(fields: [deviceId], references: [id])
+  deviceId     Int?
+  userId       Int
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  revokedAt    DateTime?
+
+  @@index([userId])
+}
+
+model OTPBasedLogin {
+  id        Int      @id @default(autoincrement())
+  code      Int
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  disabled  Boolean  @default(false)
+}
+
+model Error {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  ip          String
+  description String?
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id])
+}
+
+model PasswordReset {
+  id            String    @id @default(uuid())
+  createdAt     DateTime  @default(now())
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invalidatedAt DateTime?
+
+  @@index([userId])
+}
+
+enum UploadType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum UploadStatus {
+  PUBLISHED
+  DELETED
+  S3_MISSING //Was in DB, but not S3 bucket
+  DB_MISSING //Was in S3 bucket, but not DB
+}
+
+model Upload {
+  id             String        @id @default(uuid())
+  key            String
+  name           String?
+  size           Int?
+  status         UploadStatus  @default(PUBLISHED)
+  createdAt      DateTime      @default(now())
+  user           User          @relation("uploads", fields: [userId], references: [id], onDelete: Cascade)
+  userId         Int
+  type           UploadType
+  reports        Report[]
+  feedback       Feedback[]
+  product        Product?      @relation(fields: [productId], references: [id])
+  productId      Int?
+  userAvatars    User[]        @relation("userAvatar")
+  userBanners    User[]        @relation("userBanner")
+  spaceAvatars   Space[]       @relation("spaceBanner")
+  spaceBanners   Space[]       @relation("spaceAvatar")
+  factiiiAvatars Factiii[]     @relation("factiiiAvatar")
+  factiiiBanners Factiii[]     @relation("factiiiBanner")
+  posts          Post[]        @relation("postUploads") //posts that use this upload
+  postFactiiis   PostFactiii[] @relation("factiiiUploads") //factiiis that use this upload
+}
+
+model Order {
+  id        Int       @id @default(autoincrement())
+  total     Int //total price in $0.01, payments.amount should add up to this
+  createdAt DateTime  @default(now())
+  items     Item[] //all items in the order with quantities for each
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  userId    Int
+  payments  Payment[] //multiple if they split the payments, most will have 1 payment
+}
+
+//this holds product and quantity of the product for orders
+//This is what you search to see what has actially been sold
+model Item {
+  id        Int     @id @default(autoincrement())
+  quantity  Int     @default(1) //how many of this item was ordered
+  price     Int //price in $0.01 that was paid, add the discount for original price
+  discount  Int // discount in $0.01 discount from original price. Add this to price to get original price
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  productId Int
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  orderId   Int
+}
+
+enum ProductType {
+  COIN
+  MONTHLY_SUBSCRIPTION
+  FOUNDERS_TOKEN
+  DONATION
+}
+
+//This holds all Products on Factiii.
+//Items hold the quantity of the product sold.
+model Product {
+  id                 Int            @id @default(autoincrement())
+  active             Boolean        @default(false)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @default(now()) @updatedAt
+  inventory          Int            @default(-100) //how many of this product are available, -100 is unlimited
+  price              Int //price in $0.01, stripe price, apple/google pull from react-native-iap
+  discount           Int            @default(0) //discount in % from 0 to 100
+  title              String //title displayed when selling
+  description        String?
+  images             Upload[]
+  items              Item[] //used for tracking quantiy/product of orders
+  coin               Coin? //1to1 to hold extra info for products that can be shared as coins
+  type               ProductType
+  subscriptions      Subscription[] //used to hold the status of subscriptions associated to product if it allows
+  appStoreProductId  String?        @unique
+  playStoreProductId String?        @unique
+  stripeProductId    String?        @unique
+  space              Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  spaceId            Int //id for space that is selling this product
+}
+
+model Coin {
+  premiumDays Int         @default(0) //Days received when coin received as gift
+  quantity    Int //value in coins of this coin
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  productId   Int
+  postAwards  PostAward[]
+
+  @@id([productId])
+}
+
+enum PaymentType {
+  STRIPE
+  GOOGLE
+  APPLE
+}
+
+model Payment {
+  id            Int         @id @default(autoincrement())
+  createdAt     DateTime    @default(now()) //date payment started
+  paymentIntent String //This is the unique id for the payment from stripe, google, apple, can be used to find payment
+  paymentMethod String? //payment method used to pay
+  amount        Int //price in $0.01 that was paid
+  completed     DateTime? //date payment completed
+  refunded      DateTime? //date payment refunded
+  order         Order       @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  orderId       Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  userId        Int
+  type          PaymentType
+
+  @@unique([paymentIntent, type])
+}
+
+model Subscription {
+  id             Int          @id @default(autoincrement())
+  expires        DateTime //date subscription expires. Note: spaces use premiumAccessExpires in SpaceMember to track premium access
+  subscriptionId String //subscription.id from stripe
+  payDayAnchor   Int //day first payment was made. Used to calculate next months payment date. Ref helpers/calculateNextMonth.ts
+  nextPayment    DateTime? //date nextpayment due, When this is null, subscription is inactive
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  productId      Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  userId         Int
+  type           PaymentType //specific to stripe, google, apple
+  spaceMember    SpaceMember?
+
+  @@unique([subscriptionId, type])
+}
+
+enum NotificationType {
+  UPVOTED
+  FOLLOWED
+  REPLIED
+  TAGGED_POST
+  SPACE_INVITES
+}
+
+model Notification {
+  id               Int              @id @default(autoincrement())
+  type             NotificationType
+  targetUser       User             @relation("targetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  targetUserId     Int
+  referenceUser    User             @relation("referenceUser", fields: [referenceUserId], references: [id], onDelete: Cascade)
+  referenceUserId  Int
+  repost           Post?            @relation("repost", fields: [repostId], references: [id], onDelete: Cascade)
+  repostId         Int?
+  referenceSpace   Space?           @relation("referenceSpace", fields: [referenceSpaceId], references: [id], onDelete: Cascade)
+  referenceSpaceId Int?
+  createdAt        DateTime         @default(now())
+  read             Boolean          @default(false)
+}
+
+enum PostStatus {
+  PUBLISHED //Post is visible to all, if this is missing it cannot be seen
+  PRIVATE //Post is only visible to logged in user
+  DELETED //post deleted by user, TODO actually delete content and stop replies
+  DRAFT //Post held in draft for user
+}
+
+model Post {
+  id                     Int                         @id @default(autoincrement())
+  uuid                   String                      @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user                   User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                 Int
+  content                String
+  createdAt              DateTime                    @default(now())
+  votes                  Vote[]
+  notifications          Notification[]              @relation("repost")
+  savedPosts             SavedPost[]
+  awards                 PostAward[]
+  uploads                Upload[]                    @relation("postUploads")
+  parentPost             Post?                       @relation("reply", fields: [parentPostId], references: [id], onDelete: Cascade)
+  parentPostId           Int?
+  replies                Post[]                      @relation("reply")
+  status                 PostStatus                  @default(PUBLISHED)
+  trendingRank           Float                       @default(0.0)
+  voteCount              Int                         @default(0)
+  editHistory            PostEditHistory[]
+  pinnedUserPosts        User[]                      @relation("pinnedUserPost")
+  openaiLanguageSettings PostOpenAILanguageSetting[] //setings used for the OPENAI AI Language reply
+  repost                 Post?                       @relation("reference", fields: [repostId], references: [id], onDelete: Cascade)
+  repostId               Int?
+  reposts                Post[]                      @relation("reference")
+  bans                   BanReason[]
+  reports                Report[]                    @relation("reportedPost")
+  pinnedSpacePosts       Space[]                     @relation("pinnedSpacePost")
+  space                  Space?                      @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceId                Int?
+  factiiis               PostFactiii[]
+  anonymous              Boolean                     @default(false)
+
+  @@index([spaceId, status])
+  @@index(parentPostId)
+  @@index(userId)
+  @@index(uuid)
+  @@index(trendingRank)
+  @@index(createdAt)
+  @@index(voteCount)
+}
+
+enum VoteType {
+  UPVOTE
+  DOWNVOTE
+}
+
+model Vote {
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  type      VoteType
+  createdAt DateTime @default(now()) @updatedAt
+
+  @@id([postId, userId])
+}
+
+model SavedPost {
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    Int
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+}
+
+model PostAward {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id]) //awarded by user
+  userId    Int
+  post      Post     @relation(fields: [postId], references: [id])
+  postId    Int
+  coin      Coin     @relation(fields: [coinId], references: [productId])
+  coinId    Int
+  private   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([postId, userId])
+  @@index([postId, coinId])
+  @@index([userId])
+}
+
+model Rule {
+  id                   Int                    @id @default(autoincrement())
+  title                String
+  description          String
+  createdAt            DateTime               @default(now())
+  banReasons           BanReason[]
+  reports              Report[]
+  SpaceRuleEditHistory SpaceRuleEditHistory[]
+  edited               Boolean                @default(false)
+  factiii              Factiii?               @relation(fields: [factiiiId], references: [id])
+  factiiiId            Int?
+  space                Space?                 @relation(fields: [spaceId], references: [id])
+  spaceId              Int?
+
+  @@unique([factiiiId, spaceId])
+  @@unique([title, spaceId])
+}
+
+model Ban {
+  id             Int           @id @default(autoincrement())
+  createdAt      DateTime      @default(now())
+  expiresAt      DateTime
+  conversation   Conversation? @relation(fields: [conversationId], references: [id])
+  conversationId String?       @unique
+  public         Boolean       @default(false) //user gets to choose whether to make public
+  user           User          @relation(fields: [userId], references: [id])
+  userId         Int
+  reasons        BanReason[]
+  space          Space         @relation(fields: [spaceId], references: [id])
+  spaceId        Int
+}
+
+model BanReason {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  rule      Rule     @relation(fields: [ruleId], references: [id])
+  ruleId    Int
+  posts     Post[]
+  ban       Ban      @relation(fields: [banId], references: [id])
+  banId     Int
+}
+
+enum ReportType {
+  AVATAR
+  BANNER
+  BIO
+  POST
+  FACTIII
+  USER
+  SPACE
+}
+
+model Report {
+  id               String        @id @default(uuid())
+  type             ReportType
+  rule             Rule          @relation(fields: [ruleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  ruleId           Int //rule being cited for violation
+  comment          String? //optional reporter comment
+  status           ReportStatus  @default(PENDING)
+  reportedPost     Post?         @relation("reportedPost", fields: [reportedPostId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  reportedPostId   Int?
+  reportedUser     User?         @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  reportedUserId   Int?
+  reportedSpace    Space?        @relation("reportedSpace", fields: [reportedSpaceId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  reportedSpaceId  Int?
+  reportedUpload   Upload?       @relation(fields: [reportedUploadId], references: [id])
+  reportedUploadId String? // link to actual image that is being reported for avatar/banner
+  reportedBio      String? // copy of the offensive Bio
+  conversation     Conversation? @relation(fields: [conversationId], references: [id])
+  conversationId   String?       @unique
+  public           Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @default(now()) @updatedAt
+  user             User          @relation("user", fields: [userId], references: [id])
+  userId           Int //user doing the reporting. Do not need to track user being reported.
+  actionTakenBy    User?         @relation("actionTakenBy", fields: [actionTakenById], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  actionTakenById  Int?
+
+  @@index([reportedPostId, reportedUserId, reportedSpaceId, status, ruleId])
+}
+
+enum ReportStatus {
+  PENDING //report is pending review
+  DISCARDED //report was discarded by moderator
+  CONTENT_REMOVED //content was removed by moderator
+}
+
+model UserMute {
+  muter       User     @relation("muter", fields: [muterId], references: [id])
+  muterId     Int
+  mutedUser   User     @relation("mutedUser", fields: [mutedUserId], references: [id])
+  mutedUserId Int
+  createdAt   DateTime @default(now())
+
+  @@id([muterId, mutedUserId])
+  @@index([mutedUserId])
+}
+
+model PostEditHistory {
+  id        Int      @id @default(autoincrement())
+  content   String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    Int
+  createdAt DateTime @default(now())
+}
+
+model Message {
+  id                        Int                @id @default(autoincrement())
+  createdAt                 DateTime           @default(now())
+  content                   String
+  sender                    User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderId                  Int
+  conversation              Conversation       @relation("messages", fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId            String
+  lastMessageInConversation Conversation[]     @relation("lastMessage")
+  readConversation          ReadConversation[] @relation("lastReadMessage")
+}
+
+model Conversation {
+  id            String                     @id @default(uuid())
+  createdAt     DateTime                   @default(now())
+  messages      Message[]                  @relation("messages")
+  participants  ConversationParticipants[]
+  ban           Ban?
+  lastMessage   Message?                   @relation("lastMessage", fields: [lastMessageId], references: [id], onDelete: Cascade)
+  lastMessageId Int?
+  report        Report?
+  reads         ReadConversation[]
+}
+
+model ReadConversation {
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId    String
+  lastReadMessage   Message?     @relation("lastReadMessage", fields: [lastReadMessageId], references: [id])
+  lastReadMessageId Int?
+
+  @@id([userId, conversationId])
+}
+
+model ConversationParticipants {
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  joinedAt       DateTime     @default(now())
+
+  @@id([userId, conversationId])
+}
+
+model CoinRewardItem {
+  id          Int              @id @default(autoincrement())
+  slug        String           @unique
+  title       String
+  quantity    Int
+  description String
+  expiresAt   DateTime?
+  createdAt   DateTime         @default(now())
+  awardedTo   UserCoinReward[]
+}
+
+model UserCoinReward {
+  id        Int            @id @default(autoincrement())
+  user      User           @relation(fields: [userId], references: [id])
+  userId    Int
+  reward    CoinRewardItem @relation(fields: [rewardId], references: [id])
+  rewardId  Int
+  createdAt DateTime       @default(now())
+}
+
+enum SpaceMemberRoles {
+  OWNER
+  MODERATOR
+  MEMBER
+  FORMER_MEMBER
+}
+
+model SpaceMember {
+  id                   Int                @id @default(autoincrement())
+  createdAt            DateTime           @default(now())
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId               Int
+  space                Space              @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceId              Int
+  roles                SpaceMemberRoles[] @default([MEMBER])
+  premiumAccessExpires DateTime?
+  subscription         Subscription?      @relation(fields: [subscriptionId], references: [id])
+  subscriptionId       Int?               @unique
+  pinnedFactiiis       Factiii[]          @relation("pinnedSpaceMemberFactiiis")
+
+  @@unique([userId, spaceId])
+  @@index([userId, spaceId], name: "idx_space_member_user_id")
+}
+
+enum SpaceType {
+  PRIVATE //make space only accessible by members of space
+  PREMIUM //community requires premium to access, tracked through factiii space expires
+  PAID //community requires it's own payment to access
+  INVITE //can not be joined without invite
+}
+
+enum SpaceStatus {
+  ACTIVE
+  BANNED
+}
+
+model Space {
+  id             Int            @id @default(autoincrement())
+  slug           String         @unique
+  name           String
+  description    String?
+  rules          Rule[]
+  members        SpaceMember[]
+  types          SpaceType[]    @default([])
+  avatar         Upload?        @relation("spaceAvatar", fields: [avatarId], references: [id], onDelete: Cascade)
+  avatarId       String?
+  banner         Upload?        @relation("spaceBanner", fields: [bannerId], references: [id], onDelete: Cascade)
+  bannerId       String?
+  pinnedPost     Post?          @relation("pinnedSpacePost", fields: [pinnedPostId], references: [id])
+  pinnedPostId   Int?
+  robohash       String?        @default(uuid())
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @default(now()) @updatedAt
+  products       Product[]
+  posts          Post[]
+  banned         Ban[]
+  filters        SpaceFilter[]
+  status         SpaceStatus    @default(ACTIVE)
+  historyItems   History[]
+  invites        SpaceInvite[]
+  notificatons   Notification[] @relation("referenceSpace")
+  factiiis       Factiii[] // factiiis supported by this space
+  reports        Report[]       @relation("reportedSpace")
+  pinnedFactiiis Factiii[]      @relation("pinnedSpaceFactiiis")
+
+  @@index([types], name: "idx_space_types")
+  @@index([slug])
+}
+
+model SpaceFilter {
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceId   Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+
+  @@id([spaceId, userId])
+}
+
+model SpaceInvite {
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceId   Int
+  user      User     @relation("user", fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  inviter   User     @relation("inviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviterId Int
+  createdAt DateTime @default(now())
+  joined    Boolean  @default(false)
+
+  @@id([spaceId, userId])
+}
+
+model SpaceRuleEditHistory {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String
+  rule        Rule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  ruleId      Int
+  createdAt   DateTime @default(now())
+}
+
+model History {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int?
+  space     Space?   @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceId   Int?
+  column    String
+  value     String
+
+  @@index([userId, column])
+}
+
+enum FeedbackType {
+  SUGGESTION
+  BUG_REPORT
+}
+
+model Feedback {
+  id                     String       @id @default(uuid())
+  message                String?
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                 Int
+  media                  Upload?      @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId                String?
+  type                   FeedbackType @default(SUGGESTION)
+  includeDiagnosticsData Boolean      @default(true)
+  discarded              Boolean      @default(false)
+  createdAt              DateTime     @default(now())
+}
+
+enum PostFactiiiStatus {
+  PENDING // If people want to use pending this acts like a QUEUE
+  APPROVED // Factiii is APPROVED to display
+  REJECTED // Factiii is REJECTED and will not display to anyone besides the user who submitted it and the moderators
+  RETIRED // Factiii is RETIRED and will only display if RETIRED is requested
+}
+
+model PostFactiii {
+  id           Int               @id @default(autoincrement())
+  createdAt    DateTime          @default(now())
+  anonymous    Boolean           @default(false) // if true, only the user and receiver can see it
+  status       PostFactiiiStatus @default(APPROVED)
+  data         String?
+  spaceTimes   SpaceTime[]
+  references   PostFactiii[]     @relation("ReferencesPostFactiii") // factiiis referenced by this factiii IE this work
+  referencedBy PostFactiii[]     @relation("ReferencesPostFactiii")
+  post         Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId       Int
+  factiii      Factiii           @relation(fields: [factiiiId], references: [id])
+  factiiiId    Int
+  user         User              @relation("factiiiTag", fields: [userId], references: [id])
+  userId       Int
+  uploads      Upload[]          @relation("factiiiUploads")
+
+  @@unique([postId, factiiiId, userId])
+  @@index([factiiiId, userId, status])
+}
+
+model SpaceTime {
+  id            Int         @id @default(autoincrement())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+  timestamp     DateTime?
+  latitude      Float?
+  longitude     Float?
+  display       String?
+  altitude      Int?
+  postFactiii   PostFactiii @relation(fields: [postFactiiiId], references: [id], onDelete: Cascade)
+  postFactiiiId Int
+
+  @@index([postFactiiiId])
+}
+
+enum ScrapeStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Scrape {
+  id        Int          @id @default(autoincrement())
+  rawScrape String?
+  plannedAt DateTime
+  url       String
+  status    ScrapeStatus @default(PENDING)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime     @default(now())
+}
+
+enum FactiiiStatus {
+  PENDING // If people want to use pending this acts like a QUEUE
+  APPROVED // Factiii is APPROVED to display
+  REJECTED // Factiii is REJECTED and will not display to anyone besides the user who submitted it and the moderators
+  RETIRED // Factiii is RETIRED and will only display if RETIRED is requested
+}
+
+enum FactiiiRequirement {
+  MEDIA_REQUIRED //Post has to have media
+  CONTENT_REQUIRED //Post has to have content
+  HUMAN_SOURCE //source that is a single human
+  GOVERNMENT_SOURCE //source that is a government
+  ENTERPRISE_SOURCE //source that is a company or any other enterprise
+  ANONYMOUS_SOURCE //source that is anonymous
+  WIKI //locks content of post to 120 characters
+  DATA_REQUIRED //PostFactiii content has to have information
+  LOCATION_REQUIRED //PostFactiii has to have location
+  TIME_REQUIRED //PostFactiii has to have time
+  NO_POST_DUPLICATES //PostFactiii can be cited once on a post
+  BUDGET //This will require a +/- number in data and will calculate the total of this factiii on the factiii page
+  CAMERA //This one auto opens the camera and saves the picture it takes
+  DEVICE_LOCATION //PostFactiii has to have location
+  DISAPPEARING_DATA // this will keep the post visible until another user adds data to it/
+  NONE //this is a tag and requires nothing else
+}
+
+enum FactiiiType {
+  PRIVATE //Hides factiiis from everyone but user/space that made it
+  PREMIUM //user requires premium to view
+  PAID //user requires payment to access
+  INVITE //can not see without invite
+}
+
+//factiiis set up the rules for attaching to a post
+model Factiii {
+  id              Int                  @id @default(autoincrement())
+  data            String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @default(now())
+  status          FactiiiStatus        @default(APPROVED)
+  types           FactiiiType[]        @default([])
+  requirements    FactiiiRequirement[] @default([NONE])
+  slug            String
+  name            String
+  description     String?
+  avatar          Upload?              @relation("factiiiAvatar", fields: [avatarId], references: [id])
+  avatarId        String?
+  banner          Upload?              @relation("factiiiBanner", fields: [bannerId], references: [id])
+  bannerId        String?
+  rules           Rule[] //these are for moderating the postFactiiis assigned to this
+  factiiis        PostFactiii[]
+  user            User                 @relation("creator", fields: [userId], references: [id])
+  userId          Int // owner of this topic
+  space           Space?               @relation(fields: [spaceId], references: [id])
+  spaceId         Int?
+  userPreferences FactiiiPreferences[]
+  spaceMemberPins SpaceMember[]        @relation("pinnedSpaceMemberFactiiis")
+  userPins        User[]               @relation("pinnedUserFactiiis")
+  spacePins       Space[]              @relation("pinnedSpaceFactiiis")
+  goals           FactiiiGoal[]
+
+  @@unique([spaceId, userId, slug, requirements])
+}
+
+enum FactiiiGoalType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model FactiiiGoal {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @default(now()) @updatedAt
+  data      String
+  type      FactiiiGoalType
+  factiii   Factiii         @relation(fields: [factiiiId], references: [id])
+  factiiiId Int
+  user      User            @relation(fields: [userId], references: [id])
+  userId    Int
+
+  @@unique([factiiiId, userId, type])
+}
